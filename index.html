@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>キャラクター操作UI</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 左: キャラクター描画エリア (2/3) -->
+    <section id="stage">
+      <div id="stage-toolbar">
+        <div class="title">
+          <strong>ポージング</strong>
+        </div>
+        <div class="hist-controls">
+          <button id="btn-undo" title="元に戻す">↶ 戻す</button>
+          <button id="btn-redo" title="やり直し">↷ 進む</button>
+          <button id="btn-reset" title="Tスタンスに戻す">⭮ 初期化</button>
+        </div>
+      </div>
+      <div id="canvas-wrap">
+        <canvas id="main-canvas"></canvas>
+      </div>
+    </section>
+
+    <!-- 収納トグル -->
+    <button id="panel-toggle" title="パネルの開閉">◀</button>
+
+    <!-- 右: 選択肢パネル (1/3, 収納可能) -->
+    <aside id="panel">
+      <div class="panel-inner">
+        <h2>ここから選んでね</h2>
+        <div class="cand-head">
+          <!-- <span>安定な候補（クリックで次のイテレーションへ）</span> -->
+          <button id="btn-dice" title="別の候補を再抽選">ランダム🎲</button>
+        </div>
+        <div id="candidates"><!-- 候補はJSで生成 --></div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="js/main.js"></script>
+</body>
+</html>
