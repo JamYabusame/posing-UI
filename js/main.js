@@ -24,6 +24,9 @@ const L = {
   head: 44,       // 頭の長さ
   upperArm: 66, lowerArm: 60,
   upperLeg: 78, lowerLeg: 72,
+  hipLen: 40,     // 腰（逆さ等脚台形）の高さ
+  hipTopHalf: 40, // 腰の上底（広い方＝胴体接続側）の半幅
+  hipBotHalf: 24, // 腰の下底（狭い方）の半幅
 };
 
 /* ------------------------- 姿勢モデル -------------------------
@@ -47,43 +50,50 @@ function computeSkeleton(pose) {
   const pelvis = { x: pose.rootX, y: pose.rootY };
   P.pelvis = pelvis;
 
-  // 胴体(四辺形)は剛体。四隅すべてを torsoAng 基準で計算し形状を固定する。
-  // 腰(waist)は骨盤を軸に胴体・腕・頭ごと回転させる（＝下半身に対する上半身の傾き）。
-  const torsoAng = pose.rootAngle + pose.waist;
-  const spineAngle = torsoAng; // 腕・頭の基準角
-  const neck = pointFrom(pelvis, torsoAng, L.torso);
+  // 上半身（胴体=四辺形・肩・首・頭・腕）は rootAngle 基準。腰(waist)の影響を受けない。
+  const bodyAng = pose.rootAngle;
+  const neck = pointFrom(pelvis, bodyAng, L.torso);
   P.neck = neck;
 
-  // 胴体四辺形の頂点（上辺=肩, 下辺=胴体底。すべて torsoAng なので剛体を保つ）
-  P.shoulderR = pointFrom(neck, torsoAng + 90, L.halfW);
-  P.shoulderL = pointFrom(neck, torsoAng - 90, L.halfW);
-  P.torsoBR = pointFrom(pelvis, torsoAng + 90, L.halfW);
-  P.torsoBL = pointFrom(pelvis, torsoAng - 90, L.halfW);
-
-  // 脚の付け根は胴体（四辺形）の底辺の頂点に固定する
-  P.hipR = P.torsoBR;
-  P.hipL = P.torsoBL;
+  // 胴体四辺形（剛体）の頂点（上辺=肩, 下辺=胴体底）
+  P.shoulderR = pointFrom(neck, bodyAng + 90, L.halfW);
+  P.shoulderL = pointFrom(neck, bodyAng - 90, L.halfW);
+  P.torsoBR = pointFrom(pelvis, bodyAng + 90, L.halfW);
+  P.torsoBL = pointFrom(pelvis, bodyAng - 90, L.halfW);
 
   // 頭
-  const headAngle = spineAngle + pose.head;
+  const headAngle = bodyAng + pose.head;
   P.headTop = pointFrom(neck, headAngle, L.head);
   P.headCenter = pointFrom(neck, headAngle, L.head * 0.55);
 
   // 腕（Tスタンスで水平: 右+90, 左-90 をFKで吸収）
-  const uaR = spineAngle + 90 + pose.shoulderR;
+  const uaR = bodyAng + 90 + pose.shoulderR;
   P.elbowR = pointFrom(P.shoulderR, uaR, L.upperArm);
   P.handR = pointFrom(P.elbowR, uaR + pose.elbowR, L.lowerArm);
 
-  const uaL = spineAngle - 90 + pose.shoulderL;
+  const uaL = bodyAng - 90 + pose.shoulderL;
   P.elbowL = pointFrom(P.shoulderL, uaL, L.upperArm);
   P.handL = pointFrom(P.elbowL, uaL + pose.elbowL, L.lowerArm);
 
-  // 脚（Tスタンスで真下: +180 をFKで吸収）
-  const ulR = pose.rootAngle + 180 + pose.hipR;
+  // 腰（逆さ等脚台形）: 胴体底の中点(骨盤)に上底の中点で接続し、waist で回転する。
+  // hipAng は下向き(+180) + 腰回転(waist)。上底(広い)=接続側, 下底(狭い)=下端。
+  const hipAng = pose.rootAngle + 180 + pose.waist;
+  P.hipTopR = pointFrom(pelvis, hipAng + 90, L.hipTopHalf);
+  P.hipTopL = pointFrom(pelvis, hipAng - 90, L.hipTopHalf);
+  const hipBot = pointFrom(pelvis, hipAng, L.hipLen);
+  P.hipBot = hipBot;
+  P.hipBotR = pointFrom(hipBot, hipAng + 90, L.hipBotHalf);
+  P.hipBotL = pointFrom(hipBot, hipAng - 90, L.hipBotHalf);
+  // 脚の付け根 = 台形の脚(斜辺)の中点
+  P.hipR = { x: (P.hipTopR.x + P.hipBotR.x) / 2, y: (P.hipTopR.y + P.hipBotR.y) / 2 };
+  P.hipL = { x: (P.hipTopL.x + P.hipBotL.x) / 2, y: (P.hipTopL.y + P.hipBotL.y) / 2 };
+
+  // 脚（腰の向き hipAng を基準に垂れる＝腰の回転に追従）
+  const ulR = hipAng + pose.hipR;
   P.kneeR = pointFrom(P.hipR, ulR, L.upperLeg);
   P.footR = pointFrom(P.kneeR, ulR + pose.kneeR, L.lowerLeg);
 
-  const ulL = pose.rootAngle + 180 + pose.hipL;
+  const ulL = hipAng + pose.hipL;
   P.kneeL = pointFrom(P.hipL, ulL, L.upperLeg);
   P.footL = pointFrom(P.kneeL, ulL + pose.kneeL, L.lowerLeg);
 
@@ -165,17 +175,21 @@ function drawSkeleton(ctx, pose, opts = {}) {
   bone(P.shoulderL, P.elbowL, lw * 0.85); bone(P.elbowL, P.handL, lw * 0.85);
   bone(P.shoulderR, P.elbowR, lw * 0.85); bone(P.elbowR, P.handR, lw * 0.85);
 
+  const poly = (pts, fill, edge) => {
+    const q = pts.map(tx);
+    ctx.beginPath();
+    ctx.moveTo(q[0].x, q[0].y);
+    for (let i = 1; i < q.length; i++) ctx.lineTo(q[i].x, q[i].y);
+    ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill();
+    ctx.lineWidth = 2 * scale; ctx.strokeStyle = edge; ctx.stroke();
+  };
+
+  // 腰（逆さ等脚台形）— 胴体より先に描いて接続部を胴体で覆う
+  poly([P.hipTopL, P.hipTopR, P.hipBotR, P.hipBotL], col.torso, col.torsoEdge);
+
   // 胴体（剛体の四辺形）
-  const quad = [P.torsoBL, P.torsoBR, P.shoulderR, P.shoulderL].map(tx);
-  ctx.beginPath();
-  ctx.moveTo(quad[0].x, quad[0].y);
-  for (let i = 1; i < quad.length; i++) ctx.lineTo(quad[i].x, quad[i].y);
-  ctx.closePath();
-  ctx.fillStyle = col.torso;
-  ctx.fill();
-  ctx.lineWidth = 2 * scale;
-  ctx.strokeStyle = col.torsoEdge;
-  ctx.stroke();
+  poly([P.torsoBL, P.torsoBR, P.shoulderR, P.shoulderL], col.torso, col.torsoEdge);
 
   // 首
   bone(P.neck, P.headCenter, 9);
@@ -186,6 +200,18 @@ function drawSkeleton(ctx, pose, opts = {}) {
   ctx.arc(hc.x, hc.y, (L.head * 0.5) * scale, 0, Math.PI * 2);
   ctx.fillStyle = col.head;
   ctx.fill();
+
+  // 重心マーカー + 回転半径の円（重心まわりのモーメントを可視化）
+  if (opts.showCOG) {
+    const g = tx(centerOfGravity(P));
+    const rg = gyrationRadius(P) * scale;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath(); ctx.arc(g.x, g.y, rg, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,180,84,0.55)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(g.x, g.y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffb454'; ctx.fill();
+  }
 
   // 関節ドット
   if (opts.showJoints !== false) {
@@ -212,14 +238,62 @@ function drawSkeleton(ctx, pose, opts = {}) {
   ctx.restore();
 }
 
+/* ------------------------- 不安定度（重心まわりのモーメント） -------------------------
+   胴体・腰・頭・手足の各体節から重心を求め、重心まわりの慣性モーメント I=Σm·r² を計算。
+   （並び替えには使わず、現在姿勢の指標表示・重心の可視化に用いる） */
+const SEG_MASS = { torso: 4.0, hip: 1.6, head: 1.0, uArm: 0.9, lArm: 0.7, uLeg: 1.6, lLeg: 1.2 };
+const TOTAL_MASS = SEG_MASS.torso + SEG_MASS.hip + SEG_MASS.head
+  + 2 * (SEG_MASS.uArm + SEG_MASS.lArm) + 2 * (SEG_MASS.uLeg + SEG_MASS.lLeg);
+function torsoCentroid(P) {
+  return {
+    x: (P.torsoBL.x + P.torsoBR.x + P.shoulderL.x + P.shoulderR.x) / 4,
+    y: (P.torsoBL.y + P.torsoBR.y + P.shoulderL.y + P.shoulderR.y) / 4,
+  };
+}
+function hipCentroid(P) {
+  return {
+    x: (P.hipTopL.x + P.hipTopR.x + P.hipBotR.x + P.hipBotL.x) / 4,
+    y: (P.hipTopL.y + P.hipTopR.y + P.hipBotR.y + P.hipBotL.y) / 4,
+  };
+}
+function bodySegments(P) {
+  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  return [
+    { p: torsoCentroid(P), m: SEG_MASS.torso },
+    { p: hipCentroid(P), m: SEG_MASS.hip },
+    { p: P.headCenter, m: SEG_MASS.head },
+    { p: mid(P.shoulderR, P.elbowR), m: SEG_MASS.uArm },
+    { p: mid(P.elbowR, P.handR), m: SEG_MASS.lArm },
+    { p: mid(P.shoulderL, P.elbowL), m: SEG_MASS.uArm },
+    { p: mid(P.elbowL, P.handL), m: SEG_MASS.lArm },
+    { p: mid(P.hipR, P.kneeR), m: SEG_MASS.uLeg },
+    { p: mid(P.kneeR, P.footR), m: SEG_MASS.lLeg },
+    { p: mid(P.hipL, P.kneeL), m: SEG_MASS.uLeg },
+    { p: mid(P.kneeL, P.footL), m: SEG_MASS.lLeg },
+  ];
+}
+function centerOfGravity(P) {
+  let mx = 0, my = 0;
+  for (const s of bodySegments(P)) { mx += s.p.x * s.m; my += s.p.y * s.m; }
+  return { x: mx / TOTAL_MASS, y: my / TOTAL_MASS };
+}
+function bodyMoment(P) {
+  const g = centerOfGravity(P);
+  let I = 0;
+  for (const s of bodySegments(P)) I += s.m * ((s.p.x - g.x) ** 2 + (s.p.y - g.y) ** 2);
+  return I;
+}
+function gyrationRadius(P) { return Math.sqrt(bodyMoment(P) / TOTAL_MASS); }
+function instability(pose) { return bodyMoment(computeSkeleton(pose)); }
+
 /* ------------------------- 進化計算：候補生成 -------------------------
    安定度（モーメント）による並び替えは一時的に不使用。
    代わりに以下の優先順で候補を並べる:
      1. ユーザが最も最近操作した部位（変更量は次第に小さく＝stepFor(refineLevel)）
      2. その部位と左右対称の部位（腕・脚。同じ値 or 左右対称になる変更量）
      3. ランダムな部位
-   体の回転（腰）は候補から除外し、手足と頭のみを対象にする。 */
-const IEC_JOINTS = ['head', 'shoulderL', 'elbowL', 'shoulderR', 'elbowR',
+   腰(waist)の回転も候補に含める。 */
+const IEC_JOINTS = ['waist', 'head', 'shoulderL', 'elbowL', 'shoulderR', 'elbowR',
   'hipL', 'kneeL', 'hipR', 'kneeR'];
 const JNAME = {
   waist: '腰', head: '頭', shoulderL: '左肩', elbowL: '左肘', shoulderR: '右肩',
@@ -227,13 +301,14 @@ const JNAME = {
 };
 // 部位（symmetry 対象を含む）
 const PARTS = {
+  waist: { joints: ['waist'], mirror: null },
   head: { joints: ['head'], mirror: null },
   armL: { joints: ['shoulderL', 'elbowL'], mirror: 'armR' },
   armR: { joints: ['shoulderR', 'elbowR'], mirror: 'armL' },
   legL: { joints: ['hipL', 'kneeL'], mirror: 'legR' },
   legR: { joints: ['hipR', 'kneeR'], mirror: 'legL' },
 };
-const PART_NAME = { head: '頭', armL: '左腕', armR: '右腕', legL: '左脚', legR: '右脚' };
+const PART_NAME = { waist: '腰', head: '頭', armL: '左腕', armR: '右腕', legL: '左脚', legR: '右脚' };
 const ALL_PARTS = Object.keys(PARTS);
 const RANDOM_STEP = 40;
 
@@ -338,6 +413,11 @@ function fmtInst(v) { return (v / 1000).toFixed(1); }
 /* ------------------------- 状態・履歴 ------------------------- */
 const canvas = document.getElementById('main-canvas');
 const ctx = canvas.getContext('2d');
+// 現在姿勢プレビューは任意（HTMLに無くても動くように）
+const curCanvas = document.getElementById('cur-preview');
+const curCtx = curCanvas ? curCanvas.getContext('2d') : null;
+// 省略可能な要素を安全に更新するヘルパ
+function setText(id, txt) { const el = document.getElementById(id); if (el) el.textContent = txt; }
 
 let history = [];       // [{ pose, lastPart, refineLevel }]
 let histIndex = -1;
@@ -356,6 +436,7 @@ const HANDLE_DEFS = [
   { key: 'footL', type: 'ikLegL' },
   { key: 'headTop', type: 'head' },
   { key: 'neck', type: 'rotate' },
+  { key: 'hipBot', type: 'waist' },
   { key: 'pelvis', type: 'move' },
 ];
 
@@ -473,6 +554,13 @@ function refreshCandidates() {
 }
 
 
+function drawInto(cv, cctx, pose, pad) {
+  cctx.clearRect(0, 0, cv.width, cv.height);
+  const t = fitTransform(pose, cv.width, cv.height, pad);
+  drawSkeleton(cctx, pose, { transform: t, showJoints: false, showCOG: true });
+}
+
+
 function refreshAll() {
   hoverPose = null;
   refreshCandidates();
@@ -509,37 +597,41 @@ function pickHandle(pos) {
 
 function onDragMove(pos) {
   const P = computeSkeleton(currentPose);
-  const spineAngle = currentPose.rootAngle + currentPose.waist;
+  const bodyAng = currentPose.rootAngle;                       // 上半身の基準角
+  const hipAng = currentPose.rootAngle + 180 + currentPose.waist; // 腰・脚の基準角
   switch (drag.type) {
     case 'ikArmR': {
       const s = solve2Bone(P.shoulderR, pos, L.upperArm, L.lowerArm, P.elbowR);
-      currentPose.shoulderR = norm(s.upper - (spineAngle + 90));
+      currentPose.shoulderR = norm(s.upper - (bodyAng + 90));
       currentPose.elbowR = norm(s.lower - s.upper);
       break;
     }
     case 'ikArmL': {
       const s = solve2Bone(P.shoulderL, pos, L.upperArm, L.lowerArm, P.elbowL);
-      currentPose.shoulderL = norm(s.upper - (spineAngle - 90));
+      currentPose.shoulderL = norm(s.upper - (bodyAng - 90));
       currentPose.elbowL = norm(s.lower - s.upper);
       break;
     }
     case 'ikLegR': {
       const s = solve2Bone(P.hipR, pos, L.upperLeg, L.lowerLeg, P.kneeR);
-      currentPose.hipR = norm(s.upper - (currentPose.rootAngle + 180));
+      currentPose.hipR = norm(s.upper - hipAng);
       currentPose.kneeR = norm(s.lower - s.upper);
       break;
     }
     case 'ikLegL': {
       const s = solve2Bone(P.hipL, pos, L.upperLeg, L.lowerLeg, P.kneeL);
-      currentPose.hipL = norm(s.upper - (currentPose.rootAngle + 180));
+      currentPose.hipL = norm(s.upper - hipAng);
       currentPose.kneeL = norm(s.lower - s.upper);
       break;
     }
     case 'head':
-      currentPose.head = norm(angleOf(pos.x - P.neck.x, pos.y - P.neck.y) - spineAngle);
+      currentPose.head = norm(angleOf(pos.x - P.neck.x, pos.y - P.neck.y) - bodyAng);
       break;
-    case 'rotate': // 首をドラッグ→胴体全体を回転（骨盤中心）
-      currentPose.rootAngle = norm(angleOf(pos.x - P.pelvis.x, pos.y - P.pelvis.y) - currentPose.waist);
+    case 'waist': // 腰(台形)の下端をドラッグ→腰を回転（脚も追従）
+      currentPose.waist = norm(angleOf(pos.x - P.pelvis.x, pos.y - P.pelvis.y) - (currentPose.rootAngle + 180));
+      break;
+    case 'rotate': // 首をドラッグ→上半身(胴体)を回転（骨盤中心）
+      currentPose.rootAngle = norm(angleOf(pos.x - P.pelvis.x, pos.y - P.pelvis.y));
       break;
     case 'move': // 胴体を移動、接続部位はFKで追従
       currentPose.rootX = pos.x - drag.offx;
@@ -547,6 +639,8 @@ function onDragMove(pos) {
       break;
   }
   // ドラッグ中は現在の姿勢プレビュー・不安定度を即時更新（右画面へ反映）
+  if (curCanvas && curCtx) drawInto(curCanvas, curCtx, currentPose, 12);
+  setText('cur-inst', fmtInst(instability(currentPose)));
   refreshMain();
 }
 
@@ -560,7 +654,7 @@ function startDrag(pos) {
   return true;
 }
 // ドラッグ種別 → 操作した部位（体の移動・回転は部位なし=null）
-const DRAG_PART = { ikArmR: 'armR', ikArmL: 'armL', ikLegR: 'legR', ikLegL: 'legL', head: 'head' };
+const DRAG_PART = { ikArmR: 'armR', ikArmL: 'armL', ikLegR: 'legR', ikLegL: 'legL', head: 'head', waist: 'waist' };
 function endDrag() {
   if (!drag) return;
   const part = DRAG_PART[drag.type] || null;
@@ -595,6 +689,14 @@ function bindEvents() {
   document.getElementById('btn-undo').addEventListener('click', undo);
   document.getElementById('btn-redo').addEventListener('click', redo);
   document.getElementById('btn-reset').addEventListener('click', resetT);
+
+  // 選択肢の数 n（スライダーがある場合のみ）
+  const nInput = document.getElementById('opt-n');
+  if (nInput) nInput.addEventListener('input', () => {
+    optionCount = parseInt(nInput.value, 10);
+    setText('n-val', optionCount);
+    refreshCandidates();
+  });
 
   // サイコロ: 候補を再抽選（姿勢・履歴は変えない）
   document.getElementById('btn-dice').addEventListener('click', () => {
