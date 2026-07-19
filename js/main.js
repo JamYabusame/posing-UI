@@ -201,18 +201,6 @@ function drawSkeleton(ctx, pose, opts = {}) {
   ctx.fillStyle = col.head;
   ctx.fill();
 
-  // 重心マーカー + 回転半径の円（重心まわりのモーメントを可視化）
-  if (opts.showCOG) {
-    const g = tx(centerOfGravity(P));
-    const rg = gyrationRadius(P) * scale;
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath(); ctx.arc(g.x, g.y, rg, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,180,84,0.55)'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.beginPath(); ctx.arc(g.x, g.y, 5, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffb454'; ctx.fill();
-  }
-
   // 関節ドット
   if (opts.showJoints !== false) {
     const joints = [P.shoulderL, P.elbowL, P.shoulderR, P.elbowR,
